@@ -12,49 +12,96 @@
     origin to present as a referrer. This page does, so it can embed
     YouTube on the plugin's behalf.
 
-    No YouTube IFrame JS API / enablejsapi here on purpose — matches the
-    simplest known-working pattern (see github.com/Saranomy/yt_embed) and
-    avoids the JS-API postMessage path, which needs an even stricter
-    origin check than a plain embed does.
+    This page DOES use the YouTube IFrame Player API (enablejsapi) —
+    unlike the plugin's own ui.html, this page has a real, stable origin
+    (this GitHub Pages domain), so YouTube's origin/referrer check passes
+    here even though it fails inside Figma's sandboxed plugin UI. That
+    lets us relay real play/pause/state control to the parent (ui.html)
+    via postMessage, instead of only offering YouTube's on-screen controls.
   -->
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; width: 100vw; height: 100vh; overflow: hidden; }
-    iframe { width: 100%; height: 100%; border: none; display: block; }
+    #player { width: 100%; height: 100%; }
+    #player iframe { width: 100%; height: 100%; border: none; display: block; }
     #error { color: #fff; font-family: sans-serif; padding: 20px; display: none; }
   </style>
 </head>
 <body>
   <div id="error">No video ID or playlist ID provided.</div>
+  <div id="player"></div>
   <script>
     var params = new URLSearchParams(location.search);
     var v = params.get("v");
     var list = params.get("list");
     var start = params.get("start") || params.get("t") || "";
-    var autoplay = params.get("autoplay") || "0";
+    var autoplay = params.get("autoplay") === "1";
+
+    var player = null;
+    var playerReady = false;
+    // Commands that arrive from the parent before the player is ready are
+    // queued and flushed once onReady fires, so a fast "play" right after
+    // loading a link isn't silently dropped.
+    var pendingCommands = [];
+
+    function postToParent(msg) {
+      parent.postMessage(msg, "*");
+    }
+
+    function applyCommand(cmd) {
+      if (!player) return;
+      if (cmd.action === "play") player.playVideo();
+      else if (cmd.action === "pause") player.pauseVideo();
+      else if (cmd.action === "setVolume" && typeof cmd.value === "number") player.setVolume(cmd.value);
+    }
+
+    window.addEventListener("message", function (event) {
+      var msg = event.data;
+      if (!msg || msg.type !== "yt-command") return;
+      if (playerReady) applyCommand(msg);
+      else pendingCommands.push(msg);
+    });
+
+    function onYouTubeIframeAPIReady() {
+      var playerVars = { playsinline: 1, autoplay: autoplay ? 1 : 0 };
+      if (start) playerVars.start = Number(start);
+      var opts = {
+        host: "https://www.youtube-nocookie.com",
+        playerVars: playerVars,
+        events: {
+          onReady: function () {
+            playerReady = true;
+            postToParent({ type: "yt-ready" });
+            pendingCommands.forEach(applyCommand);
+            pendingCommands = [];
+          },
+          onStateChange: function (e) {
+            if (e.data === YT.PlayerState.PLAYING) postToParent({ type: "yt-state", playing: true });
+            else if (e.data === YT.PlayerState.PAUSED) postToParent({ type: "yt-state", playing: false });
+          },
+          onError: function (e) {
+            postToParent({ type: "yt-error", code: e.data });
+          }
+        }
+      };
+      if (list && !v) {
+        playerVars.listType = "playlist";
+        playerVars.list = list;
+      } else {
+        opts.videoId = v;
+        if (list) playerVars.list = list;
+      }
+      player = new YT.Player("player", opts);
+    }
 
     if (!v && !list) {
       document.getElementById("error").style.display = "block";
     } else {
-      var src;
-      if (list && !v) {
-        src = new URL("https://www.youtube-nocookie.com/embed/videoseries");
-        src.searchParams.set("list", list);
-      } else {
-        src = new URL("https://www.youtube-nocookie.com/embed/" + v);
-        if (list) src.searchParams.set("list", list);
-        if (start) src.searchParams.set("start", start);
-      }
-      src.searchParams.set("autoplay", autoplay);
-      src.searchParams.set("playsinline", "1");
-
-      var iframe = document.createElement("iframe");
-      iframe.src = src.toString();
-      iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
-      iframe.setAttribute("allowfullscreen", "");
-      iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen";
-      document.body.appendChild(iframe);
+      window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+      var s = document.createElement("script");
+      s.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(s);
     }
   </script>
 </body>
