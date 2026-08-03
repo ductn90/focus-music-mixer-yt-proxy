@@ -1,1 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Focus Music Mixer — YouTube embed proxy</title>
+  <!--
+    This page exists only to be iframed by the Focus Music Mixer Figma
+    plugin's ui.html. It must be hosted on a real, non-sandboxed domain
+    (e.g. GitHub Pages) — embedding youtube-nocookie.com directly from
+    inside Figma's sandboxed plugin UI iframe triggers YouTube error 153
+    ("Video player configuration error"), because that UI has no stable
+    origin to present as a referrer. This page does, so it can embed
+    YouTube on the plugin's behalf.
 
+    No YouTube IFrame JS API / enablejsapi here on purpose — matches the
+    simplest known-working pattern (see github.com/Saranomy/yt_embed) and
+    avoids the JS-API postMessage path, which needs an even stricter
+    origin check than a plain embed does.
+  -->
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; width: 100vw; height: 100vh; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+    #error { color: #fff; font-family: sans-serif; padding: 20px; display: none; }
+  </style>
+</head>
+<body>
+  <div id="error">No video ID or playlist ID provided.</div>
+  <script>
+    var params = new URLSearchParams(location.search);
+    var v = params.get("v");
+    var list = params.get("list");
+    var start = params.get("start") || params.get("t") || "";
+    var autoplay = params.get("autoplay") || "0";
+
+    if (!v && !list) {
+      document.getElementById("error").style.display = "block";
+    } else {
+      var src;
+      if (list && !v) {
+        src = new URL("https://www.youtube-nocookie.com/embed/videoseries");
+        src.searchParams.set("list", list);
+      } else {
+        src = new URL("https://www.youtube-nocookie.com/embed/" + v);
+        if (list) src.searchParams.set("list", list);
+        if (start) src.searchParams.set("start", start);
+      }
+      src.searchParams.set("autoplay", autoplay);
+      src.searchParams.set("playsinline", "1");
+
+      var iframe = document.createElement("iframe");
+      iframe.src = src.toString();
+      iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+      iframe.setAttribute("allowfullscreen", "");
+      iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen";
+      document.body.appendChild(iframe);
+    }
+  </script>
+</body>
+</html>
